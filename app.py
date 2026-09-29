@@ -13,7 +13,7 @@ import io
 # PAGE CONFIG
 # =====================================================================
 st.set_page_config(page_title="Steam Sizing Calculator", layout="wide")
-st.title("Steam Line Sizing Nomogram Calculator")
+st.title("Steam Line Sizing Calculator")
 st.markdown("Fill in the known variables in the table below. **Leave the value you want to calculate blank.**")
 
 # =====================================================================
