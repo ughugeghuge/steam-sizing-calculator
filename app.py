@@ -99,32 +99,38 @@ def add_watermark(fig):
     fig.text(0.98, 0.02, "prepared by- Umesh Ghuge", ha="right", va="bottom", fontsize=10, color="lightgray", style="italic")
 
 def generate_validation_pdf(df, title="STEAM LINE ADEQUACY REPORT"):
-    # Expanded width to 22 to accommodate all 13 columns comfortably without squishing text
-    fig, ax = plt.subplots(figsize=(22, min(4 + len(df)*0.5, 12)))
+    # Portrait aspect ratio (Width fixed to ~8.5 inches, Height scales dynamically with rows)
+    fig, ax = plt.subplots(figsize=(8.5, max(11.0, len(df)*0.4)))
     ax.axis('off')
     
-    ax.text(0.5, 0.95, title, fontsize=20, weight='bold', ha='center', va='top', color='#1F4E79')
+    ax.text(0.5, 0.95, title, fontsize=14, weight='bold', ha='center', va='top', color='#1F4E79')
     
     table_data = [df.columns.to_list()] + df.values.tolist()
-    table = ax.table(cellText=table_data, loc='center', cellLoc='center', bbox=[0.0, 0.1, 1.0, 0.75])
+    
+    # Adjusted bounding box to use the full page width
+    table = ax.table(cellText=table_data, loc='center', cellLoc='center', bbox=[0.0, 0.1, 1.0, 0.8])
     table.auto_set_font_size(False)
-    table.set_fontsize(9)
+    table.set_fontsize(7) # Scaled down to fit 13 columns neatly in portrait mode
     
     for (row, col), cell in table.get_celld().items():
         cell.set_edgecolor('#E0E0E0')
         cell.set_linewidth(0.5)
+        cell.PAD = 0.05
         if row == 0:
             cell.set_facecolor('#2C3E50')
-            cell.set_text_props(weight='bold', color='white')
+            cell.set_text_props(weight='bold', color='white', fontsize=7.5)
         else:
             cell.set_facecolor('#F8F9FA' if row % 2 == 0 else '#FFFFFF')
-            if "Undersized" in str(cell.get_text().get_text()):
+            cell_text = str(cell.get_text().get_text())
+            if "Undersized" in cell_text:
                 cell.set_text_props(color='#C0392B', weight='bold')
-            elif "Optimal" in str(cell.get_text().get_text()):
+            elif "Optimal" in cell_text:
                 cell.set_text_props(color='#27AE60', weight='bold')
+            elif "Oversized" in cell_text:
+                cell.set_text_props(color='#B7950B', weight='bold')
 
     ist_tz = pytz.timezone('Asia/Kolkata')
-    fig.text(0.02, 0.02, f"Date: {datetime.now(ist_tz).strftime('%Y-%m-%d %H:%M:%S IST')}", ha="left", va="bottom", fontsize=9, color="gray")
+    fig.text(0.02, 0.02, f"Date: {datetime.now(ist_tz).strftime('%Y-%m-%d %H:%M:%S IST')}", ha="left", va="bottom", fontsize=8, color="gray")
     add_watermark(fig)
     
     pdf_buffer = io.BytesIO()
@@ -303,7 +309,6 @@ def plot_moody_chart(Re_op, f_op, ed_op, calc_data):
     plt.close(fig)
     return fig, pdf_buffer
 
-
 # =====================================================================
 # UI LAYOUT & ROUTING
 # =====================================================================
@@ -360,7 +365,7 @@ if "Nomogram" in mode:
 # ---------------------------------------------------------
 elif "Adequacy" in mode:
     st.title("Line Adequacy Validation")
-    st.markdown("Upload an Excel file or use the table below to validate existing steam lines. The engine sizes the line using both **Velocity** and **Pressure Drop** limits, then compares them against your **Actual Dia** to rule if the line is Adequate, Undersized, or Oversized.")
+    st.markdown("Upload an Excel/CSV file or use the table below to validate existing steam lines. The engine sizes the line and recommends an optimal size and resulting pressure drop if your actual line falls outside safe tolerances.")
 
     tab1, tab2 = st.tabs(["Manual Entry", "Excel Upload"])
     
@@ -387,7 +392,7 @@ elif "Adequacy" in mode:
         )
 
     with tab2:
-        st.markdown("**Upload Format Requirements:** Excel must contain columns exactly matching the manual table above.")
+        st.markdown("**Upload Format Requirements:** Excel/CSV must contain columns exactly matching the manual table above.")
         template_csv = val_df_init.to_csv(index=False).encode('utf-8')
         st.download_button("Download Template (CSV)", data=template_csv, file_name="validation_template.csv", mime="text/csv")
         
@@ -447,27 +452,30 @@ elif "Adequacy" in mode:
             if act_d < std_d_dp:
                 status = "🔴 Undersized"
                 sug_d = f"{std_d_dp:.1f}"
+                sug_dp = f"{dp_dp:.3f}"
             elif idx_act > idx_req + 1:
                 status = "🟡 Oversized"
                 sug_d = f"{std_d_dp:.1f}"
+                sug_dp = f"{dp_dp:.3f}"
             else:
                 status = "🟢 Optimal"
                 sug_d = "Keep Current"
+                sug_dp = f"{act_dp:.3f}"
                 
             results.append({
                 "Case": cid,
                 "Type": "Sat" if stype.lower().startswith('sat') else "Sup",
-                "P (bar)": f"{P_bar:.1f}",
-                "T (°C)": f"{T_c:.1f}" if pd.notna(T_c) else "-",
-                "Flow(kg/h)": f"{flow:.0f}",
-                "L (m)": f"{L_m:.0f}",
-                "Act D(mm)": f"{act_d:.1f}",
-                "Act V(m/s)": f"{act_vel:.1f}",
-                "Act DP(bar)": f"{act_dp:.3f}",
-                "Req D(Vel)": f"{std_d_vel:.1f}",
-                "Req D(DP)": f"{std_d_dp:.1f}",
-                "Remark": status,
-                "Suggested D": sug_d
+                "P(bar)": f"{P_bar:.1f}",
+                "T(°C)": f"{T_c:.0f}" if pd.notna(T_c) else "-",
+                "F(kg/h)": f"{flow:.0f}",
+                "L(m)": f"{L_m:.0f}",
+                "ActD": f"{act_d:.1f}",
+                "ActV": f"{act_vel:.1f}",
+                "ActDP": f"{act_dp:.3f}",
+                "ReqD": f"{std_d_dp:.1f}",
+                "SugD": sug_d,
+                "SugDP": sug_dp,
+                "Remark": status
             })
             
         res_df = pd.DataFrame(results)
@@ -482,8 +490,13 @@ elif "Adequacy" in mode:
             
         st.dataframe(res_df.style.map(color_rules, subset=["Remark"]), use_container_width=True)
         
-        pdf_report = generate_validation_pdf(res_df)
-        st.download_button("📥 Download Full Validation PDF", data=pdf_report, file_name="Line_Adequacy_Report.pdf", mime="application/pdf")
+        col_btn1, col_btn2 = st.columns([1, 1])
+        with col_btn1:
+            pdf_report = generate_validation_pdf(res_df)
+            st.download_button("📥 Download Full Validation PDF", data=pdf_report, file_name="Line_Adequacy_Report.pdf", mime="application/pdf")
+        with col_btn2:
+            csv_data = res_df.to_csv(index=False).encode('utf-8')
+            st.download_button("📊 Download Excel/CSV Report", data=csv_data, file_name="Line_Adequacy_Report.csv", mime="text/csv")
 
 # ---------------------------------------------------------
 # MODE 3: DARCY-WEISBACH & MOODY CHART
