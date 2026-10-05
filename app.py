@@ -12,9 +12,8 @@ import io
 # =====================================================================
 # PAGE CONFIG & CONSTANTS
 # =====================================================================
-st.set_page_config(page_title="Steam Engineering Suite", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Advanced Steam Engineering Suite", layout="wide", initial_sidebar_state="expanded")
 
-# Standard commercial pipe internal diameters (mm) - roughly Schedule 40
 STD_PIPES_MM = [15.8, 20.9, 26.6, 35.1, 40.9, 52.5, 62.7, 77.9, 102.3, 128.2, 154.1, 202.7, 254.5, 304.8, 336.6, 381.0, 477.8]
 
 ROUGHNESS_MAP = {
@@ -93,46 +92,71 @@ def solve_single_case(steam_type, T, P, F, V, d):
     return {'type': steam_type, 'T': T, 'P': P, 'F': F, 'V': V, 'd': d, 'vg': vg, 'Q_trace': Q_trace}
 
 # =====================================================================
-# PDF REPORT GENERATORS (Modernized Tables)
+# THERMODYNAMIC CYCLE GENERATOR (NEW)
+# =====================================================================
+@st.cache_data
+def generate_saturation_dome():
+    T_range = np.linspace(273.16, 647.095, 300)
+    dome = {"T": [], "P": [], "v_l": [], "v_v": [], "h_l": [], "h_v": [], "s_l": [], "s_v": []}
+    for t in T_range:
+        try:
+            sl = IAPWS97(T=t, x=0)
+            sv = IAPWS97(T=t, x=1)
+            dome["T"].append(t - 273.15)
+            dome["P"].append(sl.P * 10) # bar absolute
+            dome["v_l"].append(sl.v)
+            dome["v_v"].append(sv.v)
+            dome["h_l"].append(sl.h)
+            dome["h_v"].append(sv.h)
+            dome["s_l"].append(sl.s)
+            dome["s_v"].append(sv.s)
+        except: pass
+    return dome
+
+def resolve_state(phase, P_g, T_c, x):
+    if pd.isna(P_g): return None
+    P_mpa = (P_g * 0.1) + 0.101325 
+    try:
+        if phase == "Saturated Liquid (x=0)": s = IAPWS97(P=P_mpa, x=0)
+        elif phase == "Saturated Vapor (x=1)": s = IAPWS97(P=P_mpa, x=1)
+        elif phase == "Two-Phase (Wet)": s = IAPWS97(P=P_mpa, x=safe_float(x)/100.0 if pd.notna(x) else 0.5)
+        elif phase == "Superheated": 
+            if pd.isna(T_c): return None
+            s = IAPWS97(P=P_mpa, T=T_c+273.15)
+        return {"P_bar_a": s.P*10, "T_C": s.T-273.15, "h": s.h, "s": s.s, "v": s.v, "x": s.x if hasattr(s, 'x') else 'Sup'}
+    except Exception: return None
+
+# =====================================================================
+# PDF REPORT GENERATORS
 # =====================================================================
 def add_watermark(fig):
     fig.text(0.98, 0.02, "prepared by- Umesh Ghuge", ha="right", va="bottom", fontsize=10, color="lightgray", style="italic")
 
-def generate_validation_pdf(df, title="STEAM LINE ADEQUACY REPORT"):
-    # Portrait aspect ratio (Width fixed to ~8.5 inches, Height scales dynamically with rows)
-    fig, ax = plt.subplots(figsize=(8.5, max(11.0, len(df)*0.4)))
+def generate_validation_pdf(df, title="PIPELINE ADEQUACY REPORT"):
+    fig, ax = plt.subplots(figsize=(22, min(4 + len(df)*0.5, 12)))
     ax.axis('off')
-    
-    ax.text(0.5, 0.95, title, fontsize=14, weight='bold', ha='center', va='top', color='#1F4E79')
-    
+    ax.text(0.5, 0.95, title, fontsize=20, weight='bold', ha='center', va='top', color='#1F4E79')
     table_data = [df.columns.to_list()] + df.values.tolist()
-    
-    # Adjusted bounding box to use the full page width
-    table = ax.table(cellText=table_data, loc='center', cellLoc='center', bbox=[0.0, 0.1, 1.0, 0.8])
+    table = ax.table(cellText=table_data, loc='center', cellLoc='center', bbox=[0.0, 0.1, 1.0, 0.75])
     table.auto_set_font_size(False)
-    table.set_fontsize(7) # Scaled down to fit 13 columns neatly in portrait mode
-    
+    table.set_fontsize(9)
     for (row, col), cell in table.get_celld().items():
         cell.set_edgecolor('#E0E0E0')
         cell.set_linewidth(0.5)
         cell.PAD = 0.05
         if row == 0:
             cell.set_facecolor('#2C3E50')
-            cell.set_text_props(weight='bold', color='white', fontsize=7.5)
+            cell.set_text_props(weight='bold', color='white', fontsize=9.5)
         else:
             cell.set_facecolor('#F8F9FA' if row % 2 == 0 else '#FFFFFF')
             cell_text = str(cell.get_text().get_text())
-            if "Undersized" in cell_text:
-                cell.set_text_props(color='#C0392B', weight='bold')
-            elif "Optimal" in cell_text:
-                cell.set_text_props(color='#27AE60', weight='bold')
-            elif "Oversized" in cell_text:
-                cell.set_text_props(color='#B7950B', weight='bold')
+            if "Undersized" in cell_text: cell.set_text_props(color='#C0392B', weight='bold')
+            elif "Optimal" in cell_text: cell.set_text_props(color='#27AE60', weight='bold')
+            elif "Oversized" in cell_text: cell.set_text_props(color='#B7950B', weight='bold')
 
     ist_tz = pytz.timezone('Asia/Kolkata')
-    fig.text(0.02, 0.02, f"Date: {datetime.now(ist_tz).strftime('%Y-%m-%d %H:%M:%S IST')}", ha="left", va="bottom", fontsize=8, color="gray")
+    fig.text(0.02, 0.02, f"Date: {datetime.now(ist_tz).strftime('%Y-%m-%d %H:%M:%S IST')}", ha="left", va="bottom", fontsize=9, color="gray")
     add_watermark(fig)
-    
     pdf_buffer = io.BytesIO()
     fig.savefig(pdf_buffer, format="pdf", bbox_inches="tight")
     pdf_buffer.seek(0)
@@ -140,9 +164,7 @@ def generate_validation_pdf(df, title="STEAM LINE ADEQUACY REPORT"):
     return pdf_buffer
 
 def solve_and_plot_steam_chart(types, Ts, Ps, Fs, Vs, ds):
-    cases_data = []
-    for i in range(len(types)):
-        cases_data.append(solve_single_case(types[i], Ts[i], Ps[i], Fs[i], Vs[i], ds[i]))
+    cases_data = [solve_single_case(types[i], Ts[i], Ps[i], Fs[i], Vs[i], ds[i]) for i in range(len(types))]
 
     fig = plt.figure(figsize=(15, 16))
     ax = fig.subplots(2, 2, gridspec_kw={'top': 0.95, 'bottom': 0.08})
@@ -150,14 +172,10 @@ def solve_and_plot_steam_chart(types, Ts, Ps, Fs, Vs, ds):
     tl, tr, bl, br = ax[0, 0], ax[0, 1], ax[1, 0], ax[1, 1]
     tr.axis('off')
 
-    tr.text(0.5, 0.95, "STEAM LINE SIZING SUMMARY", fontsize=18, weight='bold', ha='center', va='top', color='#1F4E79')
+    tr.text(0.5, 0.95, "PRELIMINARY SIZING NOMOGRAM", fontsize=18, weight='bold', ha='center', va='top', color='#1F4E79')
     
     table_cols = ["Case", "Type", "T (°C)", "P (bar g)", "F (kg/h)", "V (m/s)", "d (mm)"]
-    table_data = []
-    for i, c in enumerate(cases_data):
-        st_type = "Sat" if c['type'] == 'saturated' else "Sup"
-        table_data.append([f"C{i+1}", st_type, f"{c['T']:.1f}" if pd.notna(c['T']) else "-", 
-                           f"{c['P']:.2f}", f"{c['F']:.0f}", f"{c['V']:.1f}", f"{c['d']:.1f}"])
+    table_data = [[f"C{i+1}", "Sat" if c['type'] == 'saturated' else "Sup", f"{c['T']:.1f}" if pd.notna(c['T']) else "-", f"{c['P']:.2f}", f"{c['F']:.0f}", f"{c['V']:.1f}", f"{c['d']:.1f}"] for i, c in enumerate(cases_data)]
 
     table = tr.table(cellText=table_data, colLabels=table_cols, loc='center', cellLoc='center', bbox=[0.05, 0.4, 0.9, 0.4])
     table.auto_set_font_size(False)
@@ -233,20 +251,16 @@ def solve_and_plot_steam_chart(types, Ts, Ps, Fs, Vs, ds):
         col = colors[i % len(colors)]
         T, vg, Q_trace, d = c['T'], c['vg'], c['Q_trace'], c['d']
         if pd.isna(T) or pd.isna(vg) or pd.isna(d): continue
-        
         box_props = dict(boxstyle="round,pad=0.3", fc="white", ec=col, lw=1.5, alpha=0.9)
         arrow_props = dict(arrowstyle="->", color=col, lw=1.5, alpha=0.8)
         offset_x, offset_y = 20, 25 + (i * 25)
-
         br.plot([T, br.get_xlim()[0]], [vg, vg], color=col, lw=1.5, alpha=0.85)
         br.plot(T, vg, marker='o', color=col)
         br.annotate(f"C{i+1}", xy=(T, vg), xytext=(offset_x, offset_y), textcoords="offset points", bbox=box_props, arrowprops=arrow_props, fontsize=8)
-
         bl.plot([bl.get_xlim()[1], Q_trace], [vg, vg], color=col, lw=1.5, alpha=0.85)
         bl.plot([Q_trace, Q_trace], [vg, bl.get_ylim()[1]], color=col, lw=1.5, alpha=0.85)
         bl.plot(Q_trace, vg, marker='o', color=col)
         bl.annotate(f"C{i+1}", xy=(Q_trace, vg), xytext=(offset_x, offset_y), textcoords="offset points", bbox=box_props, arrowprops=arrow_props, fontsize=8)
-
         tl.plot([Q_trace, Q_trace], [tl.get_ylim()[0], d], color=col, lw=1.5, alpha=0.85)
         tl.plot([Q_trace, tl.get_xlim()[0]], [d, d], color=col, lw=1.5, alpha=0.85)
         tl.plot(Q_trace, d, marker='o', color=col)
@@ -255,7 +269,6 @@ def solve_and_plot_steam_chart(types, Ts, Ps, Fs, Vs, ds):
     ist_tz = pytz.timezone('Asia/Kolkata')
     fig.text(0.05, 0.02, f"Date: {datetime.now(ist_tz).strftime('%Y-%m-%d %H:%M:%S IST')}", ha="left", va="bottom", fontsize=9, color="gray")
     add_watermark(fig)
-    
     pdf_buffer = io.BytesIO()
     fig.savefig(pdf_buffer, format="pdf", bbox_inches="tight")
     pdf_buffer.seek(0)
@@ -265,21 +278,17 @@ def solve_and_plot_steam_chart(types, Ts, Ps, Fs, Vs, ds):
 def plot_moody_chart(Re_op, f_op, ed_op, calc_data):
     fig, ax = plt.subplots(figsize=(12, 7))
     Re_arr = np.logspace(3, 8, 400)
-    
-    Re_lam = np.linspace(1000, 2300, 50)
-    ax.plot(Re_lam, 64/Re_lam, color='#2C3E50', lw=2, label="Laminar Flow")
+    ax.plot(np.linspace(1000, 2300, 50), 64/np.linspace(1000, 2300, 50), color='#2C3E50', lw=2, label="Laminar Flow")
     ax.axvspan(2300, 4000, color='#F1C40F', alpha=0.2, label='Transition Zone')
     
     ed_list = [1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3, 1e-2, 5e-2]
     colors = plt.cm.viridis(np.linspace(0, 0.9, len(ed_list)))
-    
     for ed, color in zip(ed_list, colors):
         f_arr = (-1.8 * np.log10((ed/3.7)**1.11 + 6.9/Re_arr))**-2
         ax.plot(Re_arr, f_arr, color=color, alpha=0.7, lw=1.5)
         ax.text(Re_arr[-1]*1.1, f_arr[-1], f"{ed}", fontsize=8, va='center', color=color, weight='bold')
         
     ax.text(Re_arr[-1]*1.1, 0.08, r"$\epsilon/D$", fontsize=10, weight='bold', color='#333')
-    
     box_props = dict(boxstyle="round,pad=0.5", fc="#E74C3C", ec="white", lw=2, alpha=0.95)
     ax.plot(Re_op, f_op, marker='*', markersize=18, color='#E74C3C', markeredgecolor='white', markeredgewidth=1.5, zorder=5)
     ax.annotate(f"Final Design Point\nRe: {Re_op:.2e}\nf: {f_op:.4f}\nD: {calc_data['D_mm']} mm", 
@@ -290,15 +299,68 @@ def plot_moody_chart(Re_op, f_op, ed_op, calc_data):
     ax.set_yscale('log')
     ax.set_xlim(1e3, 1e8)
     ax.set_ylim(0.008, 0.1)
-    
     ax.set_xlabel("Reynolds Number (Re)", fontsize=12, weight='bold')
     ax.set_ylabel("Friction Factor (f)", fontsize=12, weight='bold')
     ax.set_title("Interactive Moody Chart: Friction Validation", fontsize=16, weight='bold', color='#1F4E79')
-    
     ax.grid(True, which='major', color='#BDC3C7', linestyle='-', alpha=0.8)
     ax.grid(True, which='minor', color='#BDC3C7', linestyle=':', alpha=0.5)
     ax.legend(loc='upper right')
 
+    add_watermark(fig)
+    ist_tz = pytz.timezone('Asia/Kolkata')
+    fig.text(0.02, 0.02, f"Date: {datetime.now(ist_tz).strftime('%Y-%m-%d %H:%M:%S IST')}", ha="left", va="bottom", fontsize=9, color="gray")
+    pdf_buffer = io.BytesIO()
+    fig.savefig(pdf_buffer, format="pdf", bbox_inches="tight")
+    pdf_buffer.seek(0)
+    plt.close(fig)
+    return fig, pdf_buffer
+
+def plot_thermo_diagrams(states_df):
+    dome = generate_saturation_dome()
+    fig, axs = plt.subplots(1, 3, figsize=(22, 7))
+    
+    colors = plt.cm.Set1(np.linspace(0, 1, len(states_df)))
+    
+    # Ax0: T-s Diagram
+    axs[0].plot(dome["s_l"] + dome["s_v"][::-1], dome["T"] + dome["T"][::-1], color='darkmagenta', lw=2, label='Saturation Dome')
+    axs[0].set_title("T-s Diagram", fontsize=14, weight='bold', color='#1F4E79')
+    axs[0].set_xlabel("Entropy, s (kJ/kg·K)", weight='bold')
+    axs[0].set_ylabel("Temperature, T (°C)", weight='bold')
+    
+    # Ax1: h-s (Mollier) Diagram
+    axs[1].plot(dome["s_l"] + dome["s_v"][::-1], dome["h_l"] + dome["h_v"][::-1], color='darkmagenta', lw=2)
+    axs[1].set_title("h-s (Mollier) Diagram", fontsize=14, weight='bold', color='#1F4E79')
+    axs[1].set_xlabel("Entropy, s (kJ/kg·K)", weight='bold')
+    axs[1].set_ylabel("Enthalpy, h (kJ/kg)", weight='bold')
+    
+    # Ax2: P-v Diagram
+    axs[2].plot(dome["v_l"] + dome["v_v"][::-1], dome["P"] + dome["P"][::-1], color='darkmagenta', lw=2)
+    axs[2].set_title("P-v Diagram", fontsize=14, weight='bold', color='#1F4E79')
+    axs[2].set_xlabel("Specific Volume, v (m³/kg)", weight='bold')
+    axs[2].set_ylabel("Pressure, P (bar a)", weight='bold')
+    axs[2].set_xscale('log')
+    axs[2].set_yscale('log')
+
+    for ax in axs:
+        ax.grid(True, linestyle=':', alpha=0.7)
+
+    # Plot Process States
+    for i, row in states_df.iterrows():
+        c = colors[i]
+        lbl = f"Pt {row['Point']}"
+        axs[0].plot(row['s'], row['T_C'], marker='o', color=c, markersize=8, label=lbl)
+        axs[1].plot(row['s'], row['h'], marker='o', color=c, markersize=8)
+        axs[2].plot(row['v'], row['P_bar_a'], marker='o', color=c, markersize=8)
+        
+        # Connect to next point
+        if i < len(states_df) - 1:
+            next_row = states_df.iloc[i+1]
+            axs[0].plot([row['s'], next_row['s']], [row['T_C'], next_row['T_C']], color='gray', linestyle='--', alpha=0.6)
+            axs[1].plot([row['s'], next_row['s']], [row['h'], next_row['h']], color='gray', linestyle='--', alpha=0.6)
+            axs[2].plot([row['v'], next_row['v']], [row['P_bar_a'], next_row['P_bar_a']], color='gray', linestyle='--', alpha=0.6)
+
+    axs[0].legend(loc='best')
+    plt.tight_layout()
     add_watermark(fig)
     ist_tz = pytz.timezone('Asia/Kolkata')
     fig.text(0.02, 0.02, f"Date: {datetime.now(ist_tz).strftime('%Y-%m-%d %H:%M:%S IST')}", ha="left", va="bottom", fontsize=9, color="gray")
@@ -309,249 +371,197 @@ def plot_moody_chart(Re_op, f_op, ed_op, calc_data):
     plt.close(fig)
     return fig, pdf_buffer
 
+
 # =====================================================================
 # UI LAYOUT & ROUTING
 # =====================================================================
-st.sidebar.title("App Navigation")
-mode = st.sidebar.radio("Select Engineering Module:", [
-    "1. Line Sizing (Velocity Nomogram)",
-    "2. Line Adequacy & Validation (Bulk)",
-    "3. Pressure Drop Sizing (Moody Chart)"
+st.sidebar.title("Engineering Modules")
+mode = st.sidebar.radio("Select Application:", [
+    "I. Preliminary Sizing (Velocity Nomogram)",
+    "II. Brownfield Validation & Pipeline Adequacy",
+    "III. Rigorous Sizing (Darcy-Weisbach)",
+    "IV. Thermodynamic Process & Cycle Analysis"
 ])
 st.sidebar.markdown("---")
 
 # ---------------------------------------------------------
-# MODE 1: VELOCITY NOMOGRAM
+# MODULE I: VELOCITY NOMOGRAM
 # ---------------------------------------------------------
-if "Nomogram" in mode:
-    st.title("Velocity Method: Line Sizing Nomogram")
-    st.markdown("Leave **exactly one variable blank** per row to calculate it.")
+if "Preliminary" in mode:
+    st.title("Module I: Preliminary Sizing & Nomogram")
+    st.markdown("Leave **exactly one variable blank** per row to reverse-calculate it based on continuity principles.")
     
-    num_cases = st.number_input("Number of Cases to Compare:", min_value=1, max_value=10, value=1)
-    
+    num_cases = st.number_input("Cases to Analyze:", min_value=1, max_value=10, value=1)
     df_init = pd.DataFrame({
-        "Steam Type": ["Superheated"] * num_cases,
-        "T (°C)": [200.0] * num_cases,
-        "P (bar g)": [10.0] * num_cases,
-        "Flow (kg/h)": [5000.0] * num_cases,
-        "Vel (m/s)": [35.0] * num_cases,
-        "Dia (mm)": [None] * num_cases,
+        "Steam Type": ["Superheated"] * num_cases, "T (°C)": [200.0] * num_cases, "P (bar g)": [10.0] * num_cases,
+        "Flow (kg/h)": [5000.0] * num_cases, "Vel (m/s)": [35.0] * num_cases, "Dia (mm)": [None] * num_cases,
     })
 
-    edited_df = st.data_editor(
-        df_init,
-        column_config={"Steam Type": st.column_config.SelectboxColumn(options=["Superheated", "Saturated"], required=True)},
-        use_container_width=True
-    )
+    edited_df = st.data_editor(df_init, column_config={"Steam Type": st.column_config.SelectboxColumn(options=["Superheated", "Saturated"], required=True)}, use_container_width=True)
 
-    if st.button("Generate Nomogram & PDF", type="primary"):
-        with st.spinner("Processing thermodynamic vectors..."):
-            types = edited_df["Steam Type"].tolist()
-            Ts = [safe_float(x) for x in edited_df["T (°C)"]]
-            Ps = [safe_float(x) for x in edited_df["P (bar g)"]]
-            Fs = [safe_float(x) for x in edited_df["Flow (kg/h)"]]
-            Vs = [safe_float(x) for x in edited_df["Vel (m/s)"]]
-            ds = [safe_float(x) for x in edited_df["Dia (mm)"]]
-            
+    if st.button("Execute Sizing & Generate PDF", type="primary"):
+        with st.spinner("Processing vectors..."):
             try:
-                fig, pdf_bytes = solve_and_plot_steam_chart(types, Ts, Ps, Fs, Vs, ds)
+                fig, pdf_bytes = solve_and_plot_steam_chart(
+                    edited_df["Steam Type"].tolist(), [safe_float(x) for x in edited_df["T (°C)"]], [safe_float(x) for x in edited_df["P (bar g)"]],
+                    [safe_float(x) for x in edited_df["Flow (kg/h)"]], [safe_float(x) for x in edited_df["Vel (m/s)"]], [safe_float(x) for x in edited_df["Dia (mm)"]]
+                )
                 st.pyplot(fig)
-                st.download_button(label="📥 Download Nomogram PDF", data=pdf_bytes, file_name="Steam_Nomogram.pdf", mime="application/pdf")
-            except Exception as e:
-                st.error(f"Calculation Error: Ensure data is entered correctly. Details: {e}")
+                st.download_button("📥 Download Nomogram Report", data=pdf_bytes, file_name="Steam_Nomogram_Report.pdf", mime="application/pdf")
+            except Exception as e: st.error(f"Error: {e}")
 
 # ---------------------------------------------------------
-# MODE 2: LINE ADEQUACY VALIDATION (BULK UPLOAD)
+# MODULE II: LINE ADEQUACY VALIDATION
 # ---------------------------------------------------------
-elif "Adequacy" in mode:
-    st.title("Line Adequacy Validation")
-    st.markdown("Upload an Excel/CSV file or use the table below to validate existing steam lines. The engine sizes the line and recommends an optimal size and resulting pressure drop if your actual line falls outside safe tolerances.")
+elif "Brownfield" in mode:
+    st.title("Module II: Brownfield Pipeline Adequacy")
+    st.markdown("Evaluate existing lines. The engine sizes via both **Velocity** and **Pressure Drop** limits to rule if current infrastructure is Adequate, Undersized, or Oversized.")
 
-    tab1, tab2 = st.tabs(["Manual Entry", "Excel Upload"])
-    
+    tab1, tab2 = st.tabs(["Manual Matrix", "Batch Excel Upload"])
     with tab1:
-        val_num = st.number_input("Rows:", min_value=1, max_value=20, value=2)
+        val_num = st.number_input("Number of Lines:", min_value=1, max_value=50, value=2)
         val_df_init = pd.DataFrame({
-            "Case ID": [f"Line-{i+1}" for i in range(val_num)],
-            "Steam Type": ["Saturated"] * val_num,
-            "P (bar g)": [10.0] * val_num,
-            "T (°C)": [None] * val_num,
-            "Flow (kg/h)": [3000.0] * val_num,
-            "Target Vel (m/s)": [25.0] * val_num,
-            "Length (m)": [100.0] * val_num,
-            "Material": ["Carbon Steel (Standard Steam)"] * val_num,
-            "Actual Dia (mm)": [80.0] * val_num
+            "Case ID": [f"Line-{i+1}" for i in range(val_num)], "Steam Type": ["Saturated"] * val_num, "P (bar g)": [10.0] * val_num, "T (°C)": [None] * val_num,
+            "Flow (kg/h)": [3000.0] * val_num, "Target Vel (m/s)": [25.0] * val_num, "Length (m)": [100.0] * val_num, "Material": ["Carbon Steel (Standard Steam)"] * val_num, "Actual Dia (mm)": [80.0] * val_num
         })
-        input_df = st.data_editor(
-            val_df_init,
-            column_config={
-                "Steam Type": st.column_config.SelectboxColumn(options=["Superheated", "Saturated"]),
-                "Material": st.column_config.SelectboxColumn(options=list(ROUGHNESS_MAP.keys()))
-            },
-            use_container_width=True
-        )
+        input_df = st.data_editor(val_df_init, column_config={"Steam Type": st.column_config.SelectboxColumn(options=["Superheated", "Saturated"]), "Material": st.column_config.SelectboxColumn(options=list(ROUGHNESS_MAP.keys()))}, use_container_width=True)
 
     with tab2:
-        st.markdown("**Upload Format Requirements:** Excel/CSV must contain columns exactly matching the manual table above.")
-        template_csv = val_df_init.to_csv(index=False).encode('utf-8')
-        st.download_button("Download Template (CSV)", data=template_csv, file_name="validation_template.csv", mime="text/csv")
-        
-        uploaded_file = st.file_uploader("Upload filled Excel/CSV file", type=['xlsx', 'csv'])
-        if uploaded_file is not None:
-            try:
-                if uploaded_file.name.endswith('.csv'):
-                    input_df = pd.read_csv(uploaded_file)
-                else:
-                    input_df = pd.read_excel(uploaded_file)
-                st.success("File uploaded successfully! Click Validate below.")
-            except Exception as e:
-                st.error(f"Error reading file: {e}")
+        st.download_button("Download Template (CSV)", data=val_df_init.to_csv(index=False).encode('utf-8'), file_name="Adequacy_Template.csv", mime="text/csv")
+        uploaded_file = st.file_uploader("Upload filled Template", type=['xlsx', 'csv'])
+        if uploaded_file: input_df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
 
-    if st.button("Validate Line Adequacy", type="primary"):
+    if st.button("Execute Adequacy Audit", type="primary"):
         results = []
         for i, row in input_df.iterrows():
             cid = row.get("Case ID", f"Line-{i+1}")
-            stype = row["Steam Type"]
-            P_bar = safe_float(row["P (bar g)"])
-            T_c = safe_float(row.get("T (°C)", None))
-            flow = safe_float(row["Flow (kg/h)"])
-            t_vel = safe_float(row["Target Vel (m/s)"])
-            L_m = safe_float(row["Length (m)"])
-            mat = row.get("Material", "Carbon Steel (Standard Steam)")
-            act_d = safe_float(row["Actual Dia (mm)"])
+            stype, mat = row["Steam Type"], row.get("Material", "Carbon Steel (Standard Steam)")
+            P_bar, T_c, flow, t_vel, L_m, act_d = safe_float(row["P (bar g)"]), safe_float(row.get("T (°C)", None)), safe_float(row["Flow (kg/h)"]), safe_float(row["Target Vel (m/s)"]), safe_float(row["Length (m)"]), safe_float(row["Actual Dia (mm)"])
             
             rho, mu, vg = get_thermo_props(stype, P_bar, T_c)
-            if rho is None:
-                results.append({"Case ID": cid, "Remark": "Error: Missing Thermo Data"})
-                continue
+            if rho is None: continue
                 
-            mass_flow_kg_s = flow / 3600
-            Q = mass_flow_kg_s / rho
+            Q = (flow / 3600) / rho
             max_dp = min(P_bar * 0.10, 1.0)
             roughness = ROUGHNESS_MAP.get(mat, 0.045)
             
-            # 1. Velocity Calc
-            req_d_vel = 1000 * np.sqrt((4 * Q) / (np.pi * t_vel))
-            std_d_vel = get_standard_pipe(req_d_vel)
-            
-            # 2. DP Calc
+            std_d_vel = get_standard_pipe(1000 * np.sqrt((4 * Q) / (np.pi * t_vel)))
             std_d_dp = std_d_vel
-            dp_dp, _, _, _, _ = calc_dp(std_d_dp, mass_flow_kg_s, rho, mu, L_m, roughness)
+            dp_dp, _, _, _, _ = calc_dp(std_d_dp, flow/3600, rho, mu, L_m, roughness)
             while dp_dp > max_dp:
                 idx = get_pipe_index(std_d_dp) + 1
                 if idx >= len(STD_PIPES_MM): break
                 std_d_dp = STD_PIPES_MM[idx]
-                dp_dp, _, _, _, _ = calc_dp(std_d_dp, mass_flow_kg_s, rho, mu, L_m, roughness)
+                dp_dp, _, _, _, _ = calc_dp(std_d_dp, flow/3600, rho, mu, L_m, roughness)
                 
-            # 3. Actual Line Checks
-            act_dp, act_vel, _, _, _ = calc_dp(act_d, mass_flow_kg_s, rho, mu, L_m, roughness)
+            act_dp, act_vel, _, _, _ = calc_dp(act_d, flow/3600, rho, mu, L_m, roughness)
             
-            idx_act = get_pipe_index(act_d)
-            idx_req = get_pipe_index(std_d_dp)
-            
-            if act_d < std_d_dp:
-                status = "🔴 Undersized"
-                sug_d = f"{std_d_dp:.1f}"
-                sug_dp = f"{dp_dp:.3f}"
-            elif idx_act > idx_req + 1:
-                status = "🟡 Oversized"
-                sug_d = f"{std_d_dp:.1f}"
-                sug_dp = f"{dp_dp:.3f}"
-            else:
-                status = "🟢 Optimal"
-                sug_d = "Keep Current"
-                sug_dp = f"{act_dp:.3f}"
+            if act_d < std_d_dp: status, sug_d, sug_dp = "🔴 Undersized", f"{std_d_dp:.1f}", f"{dp_dp:.3f}"
+            elif get_pipe_index(act_d) > get_pipe_index(std_d_dp) + 1: status, sug_d, sug_dp = "🟡 Oversized", f"{std_d_dp:.1f}", f"{dp_dp:.3f}"
+            else: status, sug_d, sug_dp = "🟢 Optimal", "Keep Current", f"{act_dp:.3f}"
                 
             results.append({
-                "Case": cid,
-                "Type": "Sat" if stype.lower().startswith('sat') else "Sup",
-                "P(bar)": f"{P_bar:.1f}",
-                "T(°C)": f"{T_c:.0f}" if pd.notna(T_c) else "-",
-                "F(kg/h)": f"{flow:.0f}",
-                "L(m)": f"{L_m:.0f}",
-                "ActD": f"{act_d:.1f}",
-                "ActV": f"{act_vel:.1f}",
-                "ActDP": f"{act_dp:.3f}",
-                "ReqD": f"{std_d_dp:.1f}",
-                "SugD": sug_d,
-                "SugDP": sug_dp,
-                "Remark": status
+                "Case": cid, "Type": "Sat" if stype.lower().startswith('sat') else "Sup", "P(bar)": f"{P_bar:.1f}", "T(°C)": f"{T_c:.0f}" if pd.notna(T_c) else "-", "F(kg/h)": f"{flow:.0f}",
+                "L(m)": f"{L_m:.0f}", "ActD": f"{act_d:.1f}", "ActV": f"{act_vel:.1f}", "ActDP": f"{act_dp:.3f}", "ReqD": f"{std_d_dp:.1f}", "SugD": sug_d, "SugDP": sug_dp, "Remark": status
             })
             
         res_df = pd.DataFrame(results)
-        st.write("### Validation Report")
-        
         def color_rules(val):
             if isinstance(val, str):
                 if "Undersized" in val: return "background-color: #FADBD8; color: #900"
                 if "Oversized" in val: return "background-color: #FCF3CF; color: #880"
                 if "Optimal" in val: return "background-color: #D5F5E3; color: #080"
             return ""
-            
         st.dataframe(res_df.style.map(color_rules, subset=["Remark"]), use_container_width=True)
         
-        col_btn1, col_btn2 = st.columns([1, 1])
-        with col_btn1:
-            pdf_report = generate_validation_pdf(res_df)
-            st.download_button("📥 Download Full Validation PDF", data=pdf_report, file_name="Line_Adequacy_Report.pdf", mime="application/pdf")
-        with col_btn2:
-            csv_data = res_df.to_csv(index=False).encode('utf-8')
-            st.download_button("📊 Download Excel/CSV Report", data=csv_data, file_name="Line_Adequacy_Report.csv", mime="text/csv")
+        c1, c2 = st.columns(2)
+        c1.download_button("📥 Download Validation PDF", data=generate_validation_pdf(res_df), file_name="Pipeline_Adequacy_Report.pdf", mime="application/pdf")
+        c2.download_button("📊 Export Matrix (CSV)", data=res_df.to_csv(index=False).encode('utf-8'), file_name="Validation_Matrix.csv", mime="text/csv")
 
 # ---------------------------------------------------------
-# MODE 3: DARCY-WEISBACH & MOODY CHART
+# MODULE III: DARCY-WEISBACH & MOODY CHART
 # ---------------------------------------------------------
-elif "Pressure Drop" in mode:
-    st.title("Pressure Drop Sizing (Moody Chart)")
-    st.markdown("Calculates optimal pipe size based on allowable pressure drop and plots the friction operating point.")
+elif "Rigorous" in mode:
+    st.title("Module III: Rigorous Sizing (Darcy-Weisbach)")
+    st.markdown("Sizes pipeline to restrict pressure drop strictly below system constraints (10% of inlet or 1 bar max).")
     
-    col1, col2, col3, col4, col5 = st.columns(5)
-    stype_dw = col1.selectbox("Steam Type", ["Saturated", "Superheated"])
-    P_in = col2.number_input("Inlet P (bar g)", value=10.0)
-    T_in = col3.number_input("Inlet T (°C)", value=250.0) if stype_dw == "Superheated" else None
-    flow = col4.number_input("Mass Flow (kg/h)", value=5000.0)
-    target_vel = col5.number_input("Target Velocity (m/s)", value=25.0)
+    c1, c2, c3, c4, c5 = st.columns(5)
+    stype_dw = c1.selectbox("Phase", ["Saturated", "Superheated"])
+    P_in = c2.number_input("Inlet P (bar g)", value=10.0)
+    T_in = c3.number_input("Inlet T (°C)", value=250.0) if stype_dw == "Superheated" else None
+    flow = c4.number_input("Flow (kg/h)", value=5000.0)
+    target_vel = c5.number_input("Velocity (m/s)", value=25.0)
     
-    colA, colB = st.columns(2)
-    L_m = colA.number_input("Equivalent Pipe Length (m)", value=100.0)
-    material = colB.selectbox("Pipe Material", list(ROUGHNESS_MAP.keys()))
-    roughness = ROUGHNESS_MAP[material]
+    cA, cB = st.columns(2)
+    L_m = cA.number_input("Equivalent Length (m)", value=100.0)
+    material = cB.selectbox("Material Class", list(ROUGHNESS_MAP.keys()))
     
-    if st.button("Calculate Sizing & Plot Moody Chart", type="primary"):
-        with st.spinner("Calculating..."):
-            max_dp_allowed = min(P_in * 0.10, 1.0)
-            rho, mu, vg = get_thermo_props(stype_dw, P_in, T_in)
+    if st.button("Compute Friction Parameters & Plot", type="primary"):
+        max_dp_allowed = min(P_in * 0.10, 1.0)
+        rho, mu, _ = get_thermo_props(stype_dw, P_in, T_in)
+        if rho is None: st.stop()
             
-            if rho is None:
-                st.error("Invalid Thermodynamics parameters.")
-                st.stop()
+        Q = (flow / 3600) / rho
+        d_std_vel = get_standard_pipe(1000 * np.sqrt((4 * Q) / (np.pi * target_vel)))
+        dp_vel, v_vel, f_vel, re_vel, ed_vel = calc_dp(d_std_vel, flow/3600, rho, mu, L_m, ROUGHNESS_MAP[material])
+        
+        d_std_dp = d_std_vel
+        dp_dp, v_dp, f_dp, re_dp, ed_dp = dp_vel, v_vel, f_vel, re_vel, ed_vel
+        while dp_dp > max_dp_allowed:
+            idx = get_pipe_index(d_std_dp) + 1
+            if idx >= len(STD_PIPES_MM): break
+            d_std_dp = STD_PIPES_MM[idx]
+            dp_dp, v_dp, f_dp, re_dp, ed_dp = calc_dp(d_std_dp, flow/3600, rho, mu, L_m, ROUGHNESS_MAP[material])
+
+        st.table(pd.DataFrame([
+            {"Methodology": "Base Velocity Sizing", "Dia (mm)": d_std_vel, "Vel (m/s)": round(v_vel, 1), "DP (bar)": round(dp_vel, 3)},
+            {"Methodology": "Darcy-Weisbach Constraints", "Dia (mm)": d_std_dp, "Vel (m/s)": round(v_dp, 1), "DP (bar)": round(dp_dp, 3)}
+        ]))
+        
+        fig, pdf_bytes = plot_moody_chart(re_dp, f_dp, ed_dp, {'D_mm': d_std_dp, 'Vel': v_dp, 'Max_dp': max_dp_allowed, 'Actual_dp': dp_dp})
+        st.pyplot(fig)
+        st.download_button("📥 Download Moody Documentation", data=pdf_bytes, file_name="Darcy_Sizing_Report.pdf", mime="application/pdf")
+
+# ---------------------------------------------------------
+# MODULE IV: THERMODYNAMIC CYCLE ANALYSIS (NEW)
+# ---------------------------------------------------------
+elif "Thermodynamic" in mode:
+    st.title("Module IV: Thermodynamic State Analysis")
+    st.markdown("Define sequential state points to map expansions, condensations, or heating processes across standard thermodynamic planes.")
+    
+    pt_num = st.number_input("Number of State Points:", min_value=1, max_value=10, value=3)
+    
+    td_init = pd.DataFrame({
+        "Point": [f"{i+1}" for i in range(pt_num)],
+        "Phase": ["Superheated", "Saturated Vapor (x=1)", "Saturated Liquid (x=0)"][:pt_num] if pt_num >= 3 else ["Superheated"] * pt_num,
+        "P (bar g)": [10.0, 10.0, 10.0][:pt_num] if pt_num >= 3 else [10.0] * pt_num,
+        "T (°C)": [250.0, None, None][:pt_num] if pt_num >= 3 else [250.0] * pt_num,
+        "Quality (x %)": [None, 100, 0][:pt_num] if pt_num >= 3 else [None] * pt_num
+    })
+
+    st.write("### Define Process States")
+    td_df = st.data_editor(
+        td_init, 
+        column_config={"Phase": st.column_config.SelectboxColumn(options=["Superheated", "Saturated Vapor (x=1)", "Saturated Liquid (x=0)", "Two-Phase (Wet)"], required=True)},
+        use_container_width=True
+    )
+
+    if st.button("Plot Thermodynamic Cycles", type="primary"):
+        with st.spinner("Compiling IAPWS-IF97 State Points..."):
+            valid_states = []
+            for _, row in td_df.iterrows():
+                state_data = resolve_state(row["Phase"], safe_float(row["P (bar g)"]), safe_float(row["T (°C)"]), safe_float(row["Quality (x %)"]))
+                if state_data:
+                    state_data["Point"] = row["Point"]
+                    valid_states.append(state_data)
+                    
+            if not valid_states:
+                st.error("No valid states computed. Please check P, T, and Phase associations.")
+            else:
+                st_df = pd.DataFrame(valid_states)
+                st.write("### Computed State Properties")
+                st.dataframe(st_df.style.format({"P_bar_a": "{:.2f}", "T_C": "{:.1f}", "h": "{:.1f}", "s": "{:.3f}", "v": "{:.4f}"}))
                 
-            mass_flow_kg_s = flow / 3600
-            Q = mass_flow_kg_s / rho
-            
-            # Initial Velocity Method
-            d_req_vel = 1000 * np.sqrt((4 * Q) / (np.pi * target_vel))
-            d_std_vel = get_standard_pipe(d_req_vel)
-            dp_vel, v_vel, f_vel, re_vel, ed_vel = calc_dp(d_std_vel, mass_flow_kg_s, rho, mu, L_m, roughness)
-            
-            # Iterate for Pressure Drop
-            d_std_dp = d_std_vel
-            dp_dp, v_dp, f_dp, re_dp, ed_dp = dp_vel, v_vel, f_vel, re_vel, ed_vel
-            
-            while dp_dp > max_dp_allowed:
-                idx = get_pipe_index(d_std_dp) + 1
-                if idx >= len(STD_PIPES_MM): break
-                d_std_dp = STD_PIPES_MM[idx]
-                dp_dp, v_dp, f_dp, re_dp, ed_dp = calc_dp(d_std_dp, mass_flow_kg_s, rho, mu, L_m, roughness)
-
-            comp_data = [
-                {"Method": "Velocity Method", "Dia (mm)": d_std_vel, "Vel (m/s)": round(v_vel, 1), "DP (bar)": round(dp_vel, 3)},
-                {"Method": "Pressure Drop Method", "Dia (mm)": d_std_dp, "Vel (m/s)": round(v_dp, 1), "DP (bar)": round(dp_dp, 3)}
-            ]
-            st.info(f"**Limit:** Max Allowable Pressure Drop is **{max_dp_allowed:.2f} bar**.")
-            st.table(pd.DataFrame(comp_data))
-            
-            calc_dict = {'D_mm': d_std_dp, 'Vel': v_dp, 'Max_dp': max_dp_allowed, 'Actual_dp': dp_dp}
-            fig, pdf_bytes = plot_moody_chart(re_dp, f_dp, ed_dp, calc_dict)
-            st.pyplot(fig)
-            st.download_button(label="📥 Download Moody Chart PDF", data=pdf_bytes, file_name="Moody_Chart.pdf", mime="application/pdf")
+                fig, pdf_bytes = plot_thermo_diagrams(st_df)
+                st.pyplot(fig)
+                st.download_button("📥 Download Thermodynamic Report", data=pdf_bytes, file_name="Thermo_Cycle_Report.pdf", mime="application/pdf")
