@@ -233,7 +233,7 @@ df_init = pd.DataFrame({
     "Dia (mm)": [None] * num_cases,
 })
 
-# Display the interactive spreadsheet grid
+# Display the interactive spreadsheet grid normal
 st.write("### Input Parameters")
 edited_df = st.data_editor(
     df_init,
