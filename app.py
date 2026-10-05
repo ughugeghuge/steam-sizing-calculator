@@ -523,33 +523,51 @@ elif "Rigorous" in mode:
         st.download_button("📥 Download Moody Documentation", data=pdf_bytes, file_name="Darcy_Sizing_Report.pdf", mime="application/pdf")
 
 # ---------------------------------------------------------
-# MODULE IV: THERMODYNAMIC CYCLE ANALYSIS (NEW)
+# MODULE IV: THERMODYNAMIC CYCLE ANALYSIS 
 # ---------------------------------------------------------
 elif "Thermodynamic" in mode:
     st.title("Module IV: Thermodynamic State Analysis")
-    st.markdown("Define sequential state points to map expansions, condensations, or heating processes across standard thermodynamic planes.")
+    st.markdown("Define sequential state points to map expansions, condensations, or heating processes across standard thermodynamic planes. Use the `+` button at the bottom of the table to add more points.")
     
-    pt_num = st.number_input("Number of State Points:", min_value=1, max_value=10, value=3)
+    tab1, tab2 = st.tabs(["Process Plant Cycle", "Co-Gen Plant Cycle"])
+    active_df = None
     
-    td_init = pd.DataFrame({
-        "Point": [f"{i+1}" for i in range(pt_num)],
-        "Phase": ["Superheated", "Saturated Vapor (x=1)", "Saturated Liquid (x=0)"][:pt_num] if pt_num >= 3 else ["Superheated"] * pt_num,
-        "P (bar g)": [10.0, 10.0, 10.0][:pt_num] if pt_num >= 3 else [10.0] * pt_num,
-        "T (°C)": [250.0, None, None][:pt_num] if pt_num >= 3 else [250.0] * pt_num,
-        "Quality (x %)": [None, 100, 0][:pt_num] if pt_num >= 3 else [None] * pt_num
-    })
+    with tab1:
+        st.info("**Standard Process Cycle Default:** Boiler Output ➔ PRV / Distribution ➔ Process Condensation ➔ Feedwater Recovery")
+        proc_init = pd.DataFrame({
+            "Point": ["1", "2", "3", "4"],
+            "Phase": ["Superheated", "Superheated", "Two-Phase (Wet)", "Saturated Liquid (x=0)"],
+            "P (bar g)": [40.0, 10.0, 10.0, 1.0],
+            "T (°C)": [400.0, 200.0, None, None],
+            "Quality (x %)": [None, None, 10.0, 0.0]
+        })
+        proc_df = st.data_editor(
+            proc_init, 
+            column_config={"Phase": st.column_config.SelectboxColumn(options=["Superheated", "Saturated Vapor (x=1)", "Saturated Liquid (x=0)", "Two-Phase (Wet)"], required=True)},
+            use_container_width=True, num_rows="dynamic", key="proc_editor"
+        )
+        if st.button("Plot Process Cycle", type="primary", key="btn_proc"): active_df = proc_df
 
-    st.write("### Define Process States")
-    td_df = st.data_editor(
-        td_init, 
-        column_config={"Phase": st.column_config.SelectboxColumn(options=["Superheated", "Saturated Vapor (x=1)", "Saturated Liquid (x=0)", "Two-Phase (Wet)"], required=True)},
-        use_container_width=True
-    )
+    with tab2:
+        st.info("**Co-Generation Cycle Default:** Boiler Output ➔ Turbine Extraction ➔ Process Load ➔ Feedwater Recovery")
+        cogen_init = pd.DataFrame({
+            "Point": ["1", "2", "3", "4", "5"],
+            "Phase": ["Superheated", "Superheated", "Saturated Vapor (x=1)", "Saturated Liquid (x=0)", "Saturated Liquid (x=0)"],
+            "P (bar g)": [80.0, 15.0, 15.0, 15.0, 1.0],
+            "T (°C)": [480.0, 250.0, None, None, None],
+            "Quality (x %)": [None, None, 100.0, 0.0, 0.0]
+        })
+        cogen_df = st.data_editor(
+            cogen_init, 
+            column_config={"Phase": st.column_config.SelectboxColumn(options=["Superheated", "Saturated Vapor (x=1)", "Saturated Liquid (x=0)", "Two-Phase (Wet)"], required=True)},
+            use_container_width=True, num_rows="dynamic", key="cogen_editor"
+        )
+        if st.button("Plot Co-Gen Cycle", type="primary", key="btn_cogen"): active_df = cogen_df
 
-    if st.button("Plot Thermodynamic Cycles", type="primary"):
+    if active_df is not None:
         with st.spinner("Compiling IAPWS-IF97 State Points..."):
             valid_states = []
-            for _, row in td_df.iterrows():
+            for _, row in active_df.iterrows():
                 state_data = resolve_state(row["Phase"], safe_float(row["P (bar g)"]), safe_float(row["T (°C)"]), safe_float(row["Quality (x %)"]))
                 if state_data:
                     state_data["Point"] = row["Point"]
