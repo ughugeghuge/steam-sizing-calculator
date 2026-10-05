@@ -25,6 +25,11 @@ ROUGHNESS_MAP = {
     "Smooth Pipe (Plastic/Glass)": 0.0001
 }
 
+def get_standard_pipe(min_d):
+    for p in STD_PIPES_MM:
+        if p >= min_d: return p
+    return STD_PIPES_MM[-1]
+
 # =====================================================================
 # CORE THERMO SOLVER (LEGACY NOMOGRAM)
 # =====================================================================
@@ -32,34 +37,34 @@ def solve_single_case(steam_type, T, P, F, V, d):
     steam_type = 'saturated' if steam_type.lower().startswith('sat') else 'superheated'
 
     if steam_type == 'saturated':
-        if P is not None:
+        if pd.notna(P):
             P_mpa = (P * 0.1) + 0.101325
             state = IAPWS97(P=P_mpa, x=1)
             T = state.T - 273.15
             vg = state.v
-        elif T is not None:
+        elif pd.notna(T):
             state = IAPWS97(T=T+273.15, x=1)
             P = (state.P - 0.101325) / 0.1
             vg = state.v
         else:
             vg = None
     else:
-        if P is not None and T is not None:
+        if pd.notna(P) and pd.notna(T):
             P_mpa = (P * 0.1) + 0.101325
             vg = IAPWS97(T=T+273.15, P=P_mpa).v
         else:
             vg = None
 
-    if d is None and F is not None and V is not None and vg is not None:
+    if pd.isna(d) and pd.notna(F) and pd.notna(V) and vg is not None:
         Q = (F / 3600) * vg
         d = 1000 * np.sqrt((4 * Q) / (np.pi * V))
-    elif V is None and F is not None and d is not None and vg is not None:
+    elif pd.isna(V) and pd.notna(F) and pd.notna(d) and vg is not None:
         Q = (F / 3600) * vg
         V = (4 * Q) / (np.pi * (d / 1000)**2)
-    elif F is None and V is not None and d is not None and vg is not None:
+    elif pd.isna(F) and pd.notna(V) and pd.notna(d) and vg is not None:
         Q = (np.pi * (d / 1000)**2 * V) / 4
         F = (Q * 3600) / vg
-    elif P is None and T is None and steam_type == 'saturated':
+    elif pd.isna(P) and pd.isna(T) and steam_type == 'saturated':
         Q = (np.pi * (d / 1000)**2 * V) / 4
         vg = (Q * 3600) / F
         def find_tsat(t_k): return IAPWS97(T=t_k, x=1).v - vg
@@ -67,18 +72,18 @@ def solve_single_case(steam_type, T, P, F, V, d):
         state = IAPWS97(T=T_k, x=1)
         T = state.T - 273.15
         P = (state.P - 0.101325) / 0.1
-    elif steam_type == 'superheated' and F is not None and V is not None and d is not None:
+    elif steam_type == 'superheated' and pd.notna(F) and pd.notna(V) and pd.notna(d):
         Q = (np.pi * (d / 1000)**2 * V) / 4
         vg = (Q * 3600) / F
-        if P is None:
+        if pd.isna(P):
             state = IAPWS97(T=T+273.15, v=vg)
             P = (state.P - 0.101325) / 0.1
-        elif T is None:
+        elif pd.isna(T):
             P_mpa = (P * 0.1) + 0.101325
             state = IAPWS97(P=P_mpa, v=vg)
             T = state.T - 273.15
 
-    Q_trace = (F / 3600) * vg if (F and vg) else 0
+    Q_trace = (F / 3600) * vg if (pd.notna(F) and vg) else 0
     return {'type': steam_type, 'T': T, 'P': P, 'F': F, 'V': V, 'd': d, 'vg': vg, 'Q_trace': Q_trace}
 
 # =====================================================================
@@ -96,7 +101,8 @@ def solve_and_plot_steam_chart(types, Ts, Ps, Fs, Vs, ds):
     tl, tr, bl, br = ax[0, 0], ax[0, 1], ax[1, 0], ax[1, 1]
     tr.axis('off')
 
-    tr.text(0.5, 0.95, "STEAM LINE SIZING NOMOGRAM", fontsize=16, weight='bold', ha='center', va='top', transform=tr.transAxes, color='#333333')
+    # Document Header
+    tr.text(0.5, 0.95, "STEAM LINE SIZING SUMMARY", fontsize=18, weight='bold', ha='center', va='top', transform=tr.transAxes, color='#1F4E79')
     
     table_cols = ["Case", "Type", "T (°C)", "P (bar g)", "F (kg/h)", "V (m/s)", "d (mm)"]
     table_data = []
@@ -104,15 +110,18 @@ def solve_and_plot_steam_chart(types, Ts, Ps, Fs, Vs, ds):
         st_type = "Sat" if c['type'] == 'saturated' else "Sup"
         table_data.append([f"C{i+1}", st_type, f"{c['T']:.1f}", f"{c['P']:.2f}", f"{c['F']:.0f}", f"{c['V']:.1f}", f"{c['d']:.1f}"])
 
-    table = tr.table(cellText=table_data, colLabels=table_cols, loc='center', cellLoc='center', bbox=[0.05, 0.4, 0.95, 0.4])
+    # High-end Technical Table Formatting
+    table = tr.table(cellText=table_data, colLabels=table_cols, loc='center', cellLoc='center', bbox=[0.02, 0.45, 0.96, 0.35])
     table.auto_set_font_size(False)
-    table.set_fontsize(9)
+    table.set_fontsize(10)
+    
     for (row, col), cell in table.get_celld().items():
+        cell.set_edgecolor('#BDC3C7')
         if row == 0:
-            cell.set_text_props(weight='bold', color='white')
-            cell.set_facecolor('#5C2D91') 
+            cell.set_text_props(weight='bold', color='white', fontsize=11)
+            cell.set_facecolor('#1F4E79') # Deep technical blue
         else:
-            cell.set_facecolor('#f9f9f9')
+            cell.set_facecolor('#F8F9F9' if row % 2 == 0 else '#FFFFFF')
 
     scalar_formatter = ticker.ScalarFormatter()
     scalar_formatter.set_scientific(False)
@@ -212,46 +221,42 @@ def plot_moody_chart(Re_op, f_op, ed_op, calc_data):
     
     # Laminar Line
     Re_lam = np.linspace(1000, 2300, 50)
-    ax.plot(Re_lam, 64/Re_lam, 'k-', lw=2, label="Laminar Flow (64/Re)")
+    ax.plot(Re_lam, 64/Re_lam, color='#2C3E50', lw=2, label="Laminar Flow")
     
-    # Transition Zone Shade
-    ax.axvspan(2300, 4000, color='yellow', alpha=0.2, label='Transition Zone')
+    # Transition Zone
+    ax.axvspan(2300, 4000, color='#F1C40F', alpha=0.2, label='Transition Zone')
     
-    # Turbulent curves for common relative roughness
+    # Colorful Turbulent curves mapping
     ed_list = [1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3, 1e-2, 5e-2]
-    for ed in ed_list:
-        f_arr = (-1.8 * np.log10((ed/3.7)**1.11 + 6.9/Re_arr))**-2
-        ax.plot(Re_arr, f_arr, color='gray', alpha=0.5, lw=1)
-        ax.text(Re_arr[-1]*1.1, f_arr[-1], f"{ed}", fontsize=8, va='center', color='gray')
-        
-    ax.text(Re_arr[-1]*1.1, 0.08, r"$\epsilon/D$", fontsize=10, weight='bold', color='gray')
+    colors = plt.cm.viridis(np.linspace(0, 0.9, len(ed_list)))
     
-    # Plot Operating Point
-    box_props = dict(boxstyle="round,pad=0.4", fc="#e63946", ec="white", lw=2, alpha=0.9)
-    ax.plot(Re_op, f_op, marker='o', markersize=10, color='#e63946', markeredgecolor='white', markeredgewidth=2, zorder=5)
-    ax.annotate(f"Operating Point\nRe: {Re_op:.2e}\nf: {f_op:.4f}", 
-                xy=(Re_op, f_op), xytext=(-20, 30), textcoords='offset points', 
-                bbox=box_props, color='white', weight='bold', ha='right', arrowprops=dict(arrowstyle="->", color='#e63946', lw=2))
+    for ed, color in zip(ed_list, colors):
+        f_arr = (-1.8 * np.log10((ed/3.7)**1.11 + 6.9/Re_arr))**-2
+        ax.plot(Re_arr, f_arr, color=color, alpha=0.7, lw=1.5)
+        ax.text(Re_arr[-1]*1.1, f_arr[-1], f"{ed}", fontsize=8, va='center', color=color, weight='bold')
+        
+    ax.text(Re_arr[-1]*1.1, 0.08, r"$\epsilon/D$", fontsize=10, weight='bold', color='#333')
+    
+    # Operating Point
+    box_props = dict(boxstyle="round,pad=0.5", fc="#E74C3C", ec="white", lw=2, alpha=0.95)
+    ax.plot(Re_op, f_op, marker='*', markersize=18, color='#E74C3C', markeredgecolor='white', markeredgewidth=1.5, zorder=5)
+    ax.annotate(f"Final Design Point\nRe: {Re_op:.2e}\nf: {f_op:.4f}\nD: {calc_data['D_mm']} mm", 
+                xy=(Re_op, f_op), xytext=(-30, 40), textcoords='offset points', 
+                bbox=box_props, color='white', weight='bold', ha='right', arrowprops=dict(arrowstyle="->", color='#E74C3C', lw=2))
     
     ax.set_xscale('log')
     ax.set_yscale('log')
     ax.set_xlim(1e3, 1e8)
     ax.set_ylim(0.008, 0.1)
     
-    ax.set_xlabel("Reynolds Number, Re", fontsize=12, weight='bold')
-    ax.set_ylabel("Friction Factor, f", fontsize=12, weight='bold')
-    ax.set_title("Interactive Moody Chart Validation", fontsize=16, weight='bold', pad=15)
-    ax.grid(True, which='both', color='gray', linestyle=':', alpha=0.6)
-    ax.legend(loc='upper right')
+    ax.set_xlabel("Reynolds Number (Re)", fontsize=12, weight='bold', color='#333')
+    ax.set_ylabel("Friction Factor (f)", fontsize=12, weight='bold', color='#333')
+    ax.set_title("Interactive Moody Chart: Friction Validation", fontsize=16, weight='bold', pad=15, color='#1F4E79')
     
-    # Information Box
-    info_text = (f"DESIGN SUMMARY:\n"
-                 f"Pipe Dia: {calc_data['D_mm']} mm\n"
-                 f"Velocity: {calc_data['Vel']:.1f} m/s\n"
-                 f"Allowed Drop: {calc_data['Max_dp']:.2f} bar\n"
-                 f"Actual Drop: {calc_data['Actual_dp']:.2f} bar")
-    ax.text(0.02, 0.05, info_text, transform=ax.transAxes, fontsize=10, family='monospace', 
-            bbox=dict(boxstyle="round", fc="#f4f4f4", ec="gray", alpha=0.9))
+    # Modern Grid styling
+    ax.grid(True, which='major', color='#BDC3C7', linestyle='-', alpha=0.8)
+    ax.grid(True, which='minor', color='#BDC3C7', linestyle=':', alpha=0.5)
+    ax.legend(loc='upper right', frameon=True, facecolor='white', edgecolor='#BDC3C7')
 
     ist_tz = pytz.timezone('Asia/Kolkata')
     fig.text(0.98, 0.02, f"Generated on: {datetime.now(ist_tz).strftime('%Y-%m-%d %H:%M:%S IST')}", ha="right", va="bottom", fontsize=8, color="gray")
@@ -260,6 +265,19 @@ def plot_moody_chart(Re_op, f_op, ed_op, calc_data):
     fig.savefig(pdf_buffer, format="pdf", bbox_inches="tight")
     pdf_buffer.seek(0)
     return fig, pdf_buffer
+
+def calc_dp(D_mm, mass_flow_kg_s, rho, mu, L_m, roughness):
+    D_m = D_mm / 1000.0
+    area = np.pi * (D_m**2) / 4.0
+    vel = mass_flow_kg_s / (rho * area)
+    Re = (rho * vel * D_m) / mu
+    ed = (roughness/1000.0) / D_m
+    if Re > 4000:
+        f = (-1.8 * np.log10((ed/3.7)**1.11 + 6.9/Re))**-2
+    else:
+        f = 64/Re if Re>0 else 0
+    dp_bar = (f * (L_m/D_m) * (rho * vel**2) / 2) / 100000.0
+    return dp_bar, vel, f, Re, ed
 
 # =====================================================================
 # UI LAYOUT & ROUTING
@@ -291,7 +309,18 @@ if "Nomogram" in mode:
         "Dia (mm)": [None] * num_cases,
     })
 
-    edited_df = st.data_editor(df_init, use_container_width=True)
+    edited_df = st.data_editor(
+        df_init,
+        column_config={
+            "Steam Type": st.column_config.SelectboxColumn(options=["Superheated", "Saturated"], required=True),
+            "T (°C)": st.column_config.NumberColumn(),
+            "P (bar g)": st.column_config.NumberColumn(),
+            "Flow (kg/h)": st.column_config.NumberColumn(),
+            "Vel (m/s)": st.column_config.NumberColumn(),
+            "Dia (mm)": st.column_config.NumberColumn(),
+        },
+        use_container_width=True
+    )
 
     def safe_float(val):
         return None if pd.isna(val) or val == "" else float(val)
@@ -319,7 +348,7 @@ if "Nomogram" in mode:
 # ---------------------------------------------------------
 elif "Validation" in mode:
     st.title("Design Validation: Installed Line Sizing")
-    st.markdown("Enter process conditions and the **Actual Installed Diameter**. The engine determines if the line is undersized, optimal, or oversized based on standard ±15% variance rules.")
+    st.markdown("Enter process conditions and the **Actual Installed Diameter**. The engine determines if the line is undersized, optimal, or oversized.")
     
     val_num = st.number_input("Items to Validate:", min_value=1, max_value=20, value=2)
     val_df_init = pd.DataFrame({
@@ -331,14 +360,16 @@ elif "Validation" in mode:
         "Actual Dia (mm)": [80.0, 150.0][:val_num] if val_num >= 2 else [80.0]*val_num
     })
     
-    v_df = st.data_editor(val_df_init, use_container_width=True)
+    v_df = st.data_editor(
+        val_df_init,
+        column_config={"Steam Type": st.column_config.SelectboxColumn(options=["Superheated", "Saturated"], required=True)},
+        use_container_width=True
+    )
     
     if st.button("Run Validation Engine", type="primary"):
         results = []
         for i, row in v_df.iterrows():
             stype = row["Steam Type"]
-            
-            # Thermo resolving
             if stype == "Saturated" and pd.notna(row["P (bar g)"]):
                 P_mpa = (row["P (bar g)"] * 0.1) + 0.101325
                 vg = IAPWS97(P=P_mpa, x=1).v
@@ -346,7 +377,7 @@ elif "Validation" in mode:
                 P_mpa = (row["P (bar g)"] * 0.1) + 0.101325
                 vg = IAPWS97(T=row["T (°C)"]+273.15, P=P_mpa).v
             else:
-                st.error(f"Row {i+1}: Missing thermo data. Saturated needs P; Superheated needs P and T.")
+                st.error(f"Row {i+1}: Missing data. Saturated needs P; Superheated needs P and T.")
                 continue
                 
             Q = (row["Flow (kg/h)"] / 3600) * vg
@@ -355,13 +386,12 @@ elif "Validation" in mode:
             
             variance = ((act_d - req_d) / req_d) * 100
             
-            # Ruling logic
             if variance < -5:
-                status = "🔴 Undersized (High Vel Risk)"
+                status = "🔴 Undersized"
             elif variance > 25:
-                status = "🟡 Oversized (High CapEx/Heat Loss)"
+                status = "🟡 Oversized"
             else:
-                status = "🟢 Optimal Design"
+                status = "🟢 Optimal"
                 
             results.append({
                 "Case": i+1,
@@ -373,79 +403,85 @@ elif "Validation" in mode:
             
         res_df = pd.DataFrame(results)
         st.write("### Validation Report")
-        st.dataframe(res_df.style.applymap(lambda x: "background-color: #ffcccc" if "Undersized" in x else ("background-color: #ffffcc" if "Oversized" in x else ("background-color: #ccffcc" if "Optimal" in x else "")), subset=["Validation Ruling"]), use_container_width=True)
+        
+        # Safely map colors without deprecated applymap
+        def color_rules(val):
+            if isinstance(val, str):
+                if "Undersized" in val: return "background-color: #ffcccc; color: #900"
+                if "Oversized" in val: return "background-color: #ffffcc; color: #880"
+                if "Optimal" in val: return "background-color: #ccffcc; color: #080"
+            return ""
+            
+        st.dataframe(res_df.style.map(color_rules, subset=["Validation Ruling"]), use_container_width=True)
 
 # ---------------------------------------------------------
 # MODE 3: DARCY-WEISBACH & MOODY CHART
 # ---------------------------------------------------------
 elif "Pressure Drop" in mode:
-    st.title("Darcy-Weisbach: Pressure Drop Sizing")
-    st.markdown("Calculates optimal pipe size based on strict allowable pressure loss, dynamically mapping friction factors via the Haaland approximation.")
+    st.title("Method Comparison: Velocity vs Pressure Drop Sizing")
+    st.markdown("Compares theoretical sizing based solely on velocity limits against strict Darcy-Weisbach allowable pressure loss limits.")
     
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     stype_dw = col1.selectbox("Steam Type", ["Saturated", "Superheated"])
     P_in = col2.number_input("Inlet P (bar g)", value=10.0)
     T_in = col3.number_input("Inlet T (°C)", value=250.0) if stype_dw == "Superheated" else None
     flow = col4.number_input("Mass Flow (kg/h)", value=5000.0)
+    target_vel = col5.number_input("Target Velocity (m/s)", value=25.0)
     
-    col5, col6 = st.columns(2)
-    L_m = col5.number_input("Equivalent Pipe Length (m)", value=100.0)
-    material = col6.selectbox("Pipe Material", list(ROUGHNESS_MAP.keys()))
+    colA, colB = st.columns(2)
+    L_m = colA.number_input("Equivalent Pipe Length (m)", value=100.0)
+    material = colB.selectbox("Pipe Material", list(ROUGHNESS_MAP.keys()))
     roughness = ROUGHNESS_MAP[material]
     
-    if st.button("Calculate Exact Sizing & Plot Moody Chart", type="primary"):
-        with st.spinner("Iterating pipe dimensions and integrating friction models..."):
-            max_dp_allowed = min(P_in * 0.10, 1.0) # 10% or 1 bar max
-            
+    if st.button("Calculate Sizing & Plot Moody Chart", type="primary"):
+        with st.spinner("Calculating Method Comparisons..."):
+            max_dp_allowed = min(P_in * 0.10, 1.0)
             P_mpa = (P_in * 0.1) + 0.101325
+            
             try:
                 steam = IAPWS97(P=P_mpa, T=T_in+273.15) if stype_dw == "Superheated" else IAPWS97(P=P_mpa, x=1)
                 rho = 1 / steam.v
                 mu = steam.mu
             except Exception as e:
-                st.error("Invalid Thermodynamics parameters for IAPWS-IF97 formulation.")
+                st.error("Invalid Thermodynamics parameters.")
                 st.stop()
                 
             mass_flow_kg_s = flow / 3600
+            Q = mass_flow_kg_s / rho
             
-            optimal_d = None
-            final_dp, final_vel, final_f, final_Re = 0, 0, 0, 0
+            # --- 1. Velocity Method Sizing ---
+            d_req_vel = 1000 * np.sqrt((4 * Q) / (np.pi * target_vel))
+            d_std_vel = get_standard_pipe(d_req_vel)
+            dp_vel, v_vel, f_vel, re_vel, ed_vel = calc_dp(d_std_vel, mass_flow_kg_s, rho, mu, L_m, roughness)
             
-            # Loop standard pipes ascending to find smallest viable pipe
-            for D_mm in STD_PIPES_MM:
-                D_m = D_mm / 1000
-                area = (np.pi * D_m**2) / 4
-                velocity = mass_flow_kg_s / (rho * area)
-                
-                Re = (rho * velocity * D_m) / mu
-                ed = (roughness / 1000) / D_m
-                
-                if Re > 4000:
-                    f = (-1.8 * np.log10((ed/3.7)**1.11 + 6.9/Re))**-2
-                else:
-                    f = 64 / Re if Re > 0 else 0
-                    
-                dp_pa = f * (L_m / D_m) * (rho * velocity**2) / 2
-                dp_bar = dp_pa / 100000
-                
-                if dp_bar <= max_dp_allowed:
-                    optimal_d = D_mm
-                    final_dp = dp_bar
-                    final_vel = velocity
-                    final_f = f
-                    final_Re = Re
-                    final_ed = ed
+            # --- 2. Pressure Drop Method Sizing ---
+            d_std_dp = d_std_vel
+            dp_dp, v_dp, f_dp, re_dp, ed_dp = dp_vel, v_vel, f_vel, re_vel, ed_vel
+            
+            while dp_dp > max_dp_allowed:
+                next_idx = STD_PIPES_MM.index(d_std_dp) + 1
+                if next_idx >= len(STD_PIPES_MM):
                     break
-                    
-            if optimal_d:
-                colA, colB, colC = st.columns(3)
-                colA.metric("Required Inner Diameter", f"{optimal_d} mm")
-                colB.metric("Resulting Pressure Drop", f"{final_dp:.3f} bar", f"Limit: {max_dp_allowed:.2f} bar", delta_color="off")
-                colC.metric("Pipeline Velocity", f"{final_vel:.1f} m/s")
-                
-                calc_dict = {'D_mm': optimal_d, 'Vel': final_vel, 'Max_dp': max_dp_allowed, 'Actual_dp': final_dp}
-                fig, pdf_bytes = plot_moody_chart(final_Re, final_f, final_ed, calc_dict)
-                st.pyplot(fig)
-                st.download_button(label="📥 Download Moody Chart PDF", data=pdf_bytes, file_name="Moody_Chart_Validation.pdf", mime="application/pdf")
-            else:
-                st.error(f"Velocity constraints exceeded. A pipe larger than {STD_PIPES_MM[-1]}mm is required to maintain pressure drop below {max_dp_allowed:.2f} bar.")
+                d_std_dp = STD_PIPES_MM[next_idx]
+                dp_dp, v_dp, f_dp, re_dp, ed_dp = calc_dp(d_std_dp, mass_flow_kg_s, rho, mu, L_m, roughness)
+
+            # Presentation Table
+            comp_data = [
+                {"Method": "Velocity Method (Initial)", "Selected Dia (mm)": d_std_vel, "Actual Vel (m/s)": round(v_vel, 1), "Resultant DP (bar)": round(dp_vel, 3), "Status": "Exceeds Allowable DP" if dp_vel > max_dp_allowed else "Meets Criteria"},
+                {"Method": "Pressure Drop Method (Final)", "Selected Dia (mm)": d_std_dp, "Actual Vel (m/s)": round(v_dp, 1), "Resultant DP (bar)": round(dp_dp, 3), "Status": "Optimal DP Design"}
+            ]
+            
+            st.write("### Sizing Methodology Comparison")
+            st.info(f"**Constraint:** Maximum Allowable Pressure Drop is **{max_dp_allowed:.2f} bar**.")
+            
+            comp_df = pd.DataFrame(comp_data)
+            st.dataframe(comp_df.style.map(lambda x: "background-color: #ffcccc" if "Exceeds" in str(x) else ("background-color: #ccffcc" if "Optimal" in str(x) else ""), subset=["Status"]), use_container_width=True)
+            
+            if d_std_dp > d_std_vel:
+                st.warning(f"Note: Velocity method sizing ({d_std_vel}mm) resulted in {dp_vel:.3f} bar DP, violating constraints. Increased to {d_std_dp}mm to satisfy Pressure Drop criteria.")
+            
+            # Plot Final on Moody
+            calc_dict = {'D_mm': d_std_dp, 'Vel': v_dp, 'Max_dp': max_dp_allowed, 'Actual_dp': dp_dp}
+            fig, pdf_bytes = plot_moody_chart(re_dp, f_dp, ed_dp, calc_dict)
+            st.pyplot(fig)
+            st.download_button(label="📥 Download Moody Chart PDF", data=pdf_bytes, file_name="Moody_Chart_Validation.pdf", mime="application/pdf")
