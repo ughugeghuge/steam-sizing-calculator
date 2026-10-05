@@ -92,26 +92,41 @@ def solve_single_case(steam_type, T, P, F, V, d):
     return {'type': steam_type, 'T': T, 'P': P, 'F': F, 'V': V, 'd': d, 'vg': vg, 'Q_trace': Q_trace}
 
 # =====================================================================
-# THERMODYNAMIC CYCLE GENERATOR (NEW)
+# THERMODYNAMIC CYCLE GENERATOR (WITH DRYNESS LINES)
 # =====================================================================
 @st.cache_data
 def generate_saturation_dome():
-    T_range = np.linspace(273.16, 647.095, 300)
+    T_range = np.linspace(273.16 + 1, 647.095, 300)
     dome = {"T": [], "P": [], "v_l": [], "v_v": [], "h_l": [], "h_v": [], "s_l": [], "s_v": []}
+    
+    # Initialize dictionary to hold constant quality (x) curves
+    x_lines = {x: {"T": [], "P": [], "v": [], "h": [], "s": []} for x in [0.2, 0.4, 0.6, 0.8]}
+    
     for t in T_range:
         try:
             sl = IAPWS97(T=t, x=0)
             sv = IAPWS97(T=t, x=1)
-            dome["T"].append(t - 273.15)
-            dome["P"].append(sl.P * 10) # bar absolute
+            t_c = t - 273.15
+            p_bar = sl.P * 10
+            
+            dome["T"].append(t_c)
+            dome["P"].append(p_bar)
             dome["v_l"].append(sl.v)
             dome["v_v"].append(sv.v)
             dome["h_l"].append(sl.h)
             dome["h_v"].append(sv.h)
             dome["s_l"].append(sl.s)
             dome["s_v"].append(sv.s)
+            
+            # Linearly interpolate properties for constant x lines
+            for x_val in x_lines.keys():
+                x_lines[x_val]["T"].append(t_c)
+                x_lines[x_val]["P"].append(p_bar)
+                x_lines[x_val]["v"].append(sl.v + x_val*(sv.v - sl.v))
+                x_lines[x_val]["h"].append(sl.h + x_val*(sv.h - sl.h))
+                x_lines[x_val]["s"].append(sl.s + x_val*(sv.s - sl.s))
         except: pass
-    return dome
+    return dome, x_lines
 
 def resolve_state(phase, P_g, T_c, x):
     if pd.isna(P_g): return None
@@ -316,7 +331,7 @@ def plot_moody_chart(Re_op, f_op, ed_op, calc_data):
     return fig, pdf_buffer
 
 def plot_thermo_diagrams(states_df, zoom=False):
-    dome = generate_saturation_dome()
+    dome, x_lines = generate_saturation_dome()
     fig, axs = plt.subplots(1, 3, figsize=(22, 7))
     
     colors = plt.cm.Set1(np.linspace(0, 1, len(states_df)))
@@ -326,6 +341,20 @@ def plot_thermo_diagrams(states_df, zoom=False):
     axs[1].plot(dome["s_l"] + dome["s_v"][::-1], dome["h_l"] + dome["h_v"][::-1], color='darkmagenta', lw=2, zorder=1)
     axs[2].plot(dome["v_l"] + dome["v_v"][::-1], dome["P"] + dome["P"][::-1], color='darkmagenta', lw=2, zorder=1)
     
+    # Plot Constant Quality (x) Lines
+    T_arr = np.array(dome["T"])
+    idx_label = (np.abs(T_arr - 100)).argmin() if len(T_arr) > 0 else len(T_arr) // 3
+    
+    for x_val, data in x_lines.items():
+        axs[0].plot(data["s"], data["T"], color='gray', linestyle=':', lw=1.2, alpha=0.7, zorder=1)
+        axs[1].plot(data["s"], data["h"], color='gray', linestyle=':', lw=1.2, alpha=0.7, zorder=1)
+        axs[2].plot(data["v"], data["P"], color='gray', linestyle=':', lw=1.2, alpha=0.7, zorder=1)
+        
+        if len(data["T"]) > idx_label:
+            axs[0].text(data["s"][idx_label], data["T"][idx_label], f" x={x_val}", color='gray', fontsize=8, style='italic', alpha=0.9)
+            axs[1].text(data["s"][idx_label], data["h"][idx_label], f" x={x_val}", color='gray', fontsize=8, style='italic', alpha=0.9)
+            axs[2].text(data["v"][idx_label], data["P"][idx_label], f" x={x_val}", color='gray', fontsize=8, style='italic', alpha=0.9)
+
     # Title & Labels
     axs[0].set_title("T-s Diagram", fontsize=14, weight='bold', color='#1F4E79')
     axs[0].set_xlabel("Entropy, s (kJ/kg·K)", weight='bold')
@@ -549,7 +578,7 @@ elif "Rigorous" in mode:
 # ---------------------------------------------------------
 elif "Thermodynamic" in mode:
     st.title("Module IV: Thermodynamic State Analysis")
-    st.markdown("Define sequential state points to map expansions, condensations, or heating processes across standard thermodynamic planes.")
+    st.markdown("Define sequential state points to map expansions, condensations, or heating processes across standard thermodynamic planes. Use the `+` button at the bottom of the table to add more points.")
     
     st.info("💡 **Tip for editing rows:** \n* **Add:** Click the `+` button at the bottom of the table.\n* **Delete:** Click the gray box on the far left of the row (the index number) to highlight it, then press **Delete** or **Backspace**.")
 
