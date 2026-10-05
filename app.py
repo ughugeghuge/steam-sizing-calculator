@@ -315,26 +315,26 @@ def plot_moody_chart(Re_op, f_op, ed_op, calc_data):
     plt.close(fig)
     return fig, pdf_buffer
 
-def plot_thermo_diagrams(states_df):
+def plot_thermo_diagrams(states_df, zoom=False):
     dome = generate_saturation_dome()
     fig, axs = plt.subplots(1, 3, figsize=(22, 7))
     
     colors = plt.cm.Set1(np.linspace(0, 1, len(states_df)))
     
-    # Ax0: T-s Diagram
-    axs[0].plot(dome["s_l"] + dome["s_v"][::-1], dome["T"] + dome["T"][::-1], color='darkmagenta', lw=2, label='Saturation Dome')
+    # Plot Base Domes
+    axs[0].plot(dome["s_l"] + dome["s_v"][::-1], dome["T"] + dome["T"][::-1], color='darkmagenta', lw=2, label='Saturation Dome', zorder=1)
+    axs[1].plot(dome["s_l"] + dome["s_v"][::-1], dome["h_l"] + dome["h_v"][::-1], color='darkmagenta', lw=2, zorder=1)
+    axs[2].plot(dome["v_l"] + dome["v_v"][::-1], dome["P"] + dome["P"][::-1], color='darkmagenta', lw=2, zorder=1)
+    
+    # Title & Labels
     axs[0].set_title("T-s Diagram", fontsize=14, weight='bold', color='#1F4E79')
     axs[0].set_xlabel("Entropy, s (kJ/kg·K)", weight='bold')
     axs[0].set_ylabel("Temperature, T (°C)", weight='bold')
     
-    # Ax1: h-s (Mollier) Diagram
-    axs[1].plot(dome["s_l"] + dome["s_v"][::-1], dome["h_l"] + dome["h_v"][::-1], color='darkmagenta', lw=2)
     axs[1].set_title("h-s (Mollier) Diagram", fontsize=14, weight='bold', color='#1F4E79')
     axs[1].set_xlabel("Entropy, s (kJ/kg·K)", weight='bold')
     axs[1].set_ylabel("Enthalpy, h (kJ/kg)", weight='bold')
     
-    # Ax2: P-v Diagram
-    axs[2].plot(dome["v_l"] + dome["v_v"][::-1], dome["P"] + dome["P"][::-1], color='darkmagenta', lw=2)
     axs[2].set_title("P-v Diagram", fontsize=14, weight='bold', color='#1F4E79')
     axs[2].set_xlabel("Specific Volume, v (m³/kg)", weight='bold')
     axs[2].set_ylabel("Pressure, P (bar a)", weight='bold')
@@ -348,16 +348,37 @@ def plot_thermo_diagrams(states_df):
     for i, row in states_df.iterrows():
         c = colors[i]
         lbl = f"Pt {row['Point']}"
-        axs[0].plot(row['s'], row['T_C'], marker='o', color=c, markersize=8, label=lbl)
-        axs[1].plot(row['s'], row['h'], marker='o', color=c, markersize=8)
-        axs[2].plot(row['v'], row['P_bar_a'], marker='o', color=c, markersize=8)
+        axs[0].plot(row['s'], row['T_C'], marker='o', color=c, markersize=8, label=lbl, zorder=5)
+        axs[1].plot(row['s'], row['h'], marker='o', color=c, markersize=8, zorder=5)
+        axs[2].plot(row['v'], row['P_bar_a'], marker='o', color=c, markersize=8, zorder=5)
         
         # Connect to next point
         if i < len(states_df) - 1:
             next_row = states_df.iloc[i+1]
-            axs[0].plot([row['s'], next_row['s']], [row['T_C'], next_row['T_C']], color='gray', linestyle='--', alpha=0.6)
-            axs[1].plot([row['s'], next_row['s']], [row['h'], next_row['h']], color='gray', linestyle='--', alpha=0.6)
-            axs[2].plot([row['v'], next_row['v']], [row['P_bar_a'], next_row['P_bar_a']], color='gray', linestyle='--', alpha=0.6)
+            axs[0].plot([row['s'], next_row['s']], [row['T_C'], next_row['T_C']], color='gray', linestyle='--', alpha=0.8, zorder=3)
+            axs[1].plot([row['s'], next_row['s']], [row['h'], next_row['h']], color='gray', linestyle='--', alpha=0.8, zorder=3)
+            axs[2].plot([row['v'], next_row['v']], [row['P_bar_a'], next_row['P_bar_a']], color='gray', linestyle='--', alpha=0.8, zorder=3)
+
+    # Apply Dynamic Zoom if requested
+    if zoom and len(states_df) > 0:
+        s_min, s_max = states_df['s'].min(), states_df['s'].max()
+        T_min, T_max = states_df['T_C'].min(), states_df['T_C'].max()
+        h_min, h_max = states_df['h'].min(), states_df['h'].max()
+        P_min, P_max = states_df['P_bar_a'].min(), states_df['P_bar_a'].max()
+        v_min, v_max = states_df['v'].min(), states_df['v'].max()
+
+        s_marg = max(0.2, (s_max - s_min) * 0.2)
+        T_marg = max(10, (T_max - T_min) * 0.2)
+        h_marg = max(50, (h_max - h_min) * 0.2)
+        
+        axs[0].set_xlim(s_min - s_marg, s_max + s_marg)
+        axs[0].set_ylim(T_min - T_marg, T_max + T_marg)
+        
+        axs[1].set_xlim(s_min - s_marg, s_max + s_marg)
+        axs[1].set_ylim(h_min - h_marg, h_max + h_marg)
+        
+        axs[2].set_xlim(v_min * 0.5, v_max * 2.0)
+        axs[2].set_ylim(P_min * 0.5, P_max * 2.0)
 
     axs[0].legend(loc='best')
     plt.tight_layout()
@@ -419,6 +440,7 @@ elif "Brownfield" in mode:
 
     tab1, tab2 = st.tabs(["Manual Matrix", "Batch Excel Upload"])
     with tab1:
+        st.info("💡 **Tip:** To delete a row, click the gray box on the far left of the row (the index number) to select it, then press **Delete** or **Backspace** on your keyboard.")
         val_num = st.number_input("Number of Lines:", min_value=1, max_value=50, value=2)
         val_df_init = pd.DataFrame({
             "Case ID": [f"Line-{i+1}" for i in range(val_num)], "Steam Type": ["Saturated"] * val_num, "P (bar g)": [10.0] * val_num, "T (°C)": [None] * val_num,
@@ -527,13 +549,17 @@ elif "Rigorous" in mode:
 # ---------------------------------------------------------
 elif "Thermodynamic" in mode:
     st.title("Module IV: Thermodynamic State Analysis")
-    st.markdown("Define sequential state points to map expansions, condensations, or heating processes across standard thermodynamic planes. Use the `+` button at the bottom of the table to add more points.")
+    st.markdown("Define sequential state points to map expansions, condensations, or heating processes across standard thermodynamic planes.")
+    
+    st.info("💡 **Tip for editing rows:** \n* **Add:** Click the `+` button at the bottom of the table.\n* **Delete:** Click the gray box on the far left of the row (the index number) to highlight it, then press **Delete** or **Backspace**.")
+
+    zoom_view = st.checkbox("🔍 Zoom to Process Points (Magnifies small changes in pressure or temperature)", value=False)
     
     tab1, tab2 = st.tabs(["Process Plant Cycle", "Co-Gen Plant Cycle"])
     active_df = None
     
     with tab1:
-        st.info("**Standard Process Cycle Default:** Boiler Output ➔ PRV / Distribution ➔ Process Condensation ➔ Feedwater Recovery")
+        st.markdown("**Standard Process Cycle Default:** Boiler Output ➔ PRV / Distribution ➔ Process Condensation ➔ Feedwater Recovery")
         proc_init = pd.DataFrame({
             "Point": ["1", "2", "3", "4"],
             "Phase": ["Superheated", "Superheated", "Two-Phase (Wet)", "Saturated Liquid (x=0)"],
@@ -549,7 +575,7 @@ elif "Thermodynamic" in mode:
         if st.button("Plot Process Cycle", type="primary", key="btn_proc"): active_df = proc_df
 
     with tab2:
-        st.info("**Co-Generation Cycle Default:** Boiler Output ➔ Turbine Extraction ➔ Process Load ➔ Feedwater Recovery")
+        st.markdown("**Co-Generation Cycle Default:** Boiler Output ➔ Turbine Extraction ➔ Process Load ➔ Feedwater Recovery")
         cogen_init = pd.DataFrame({
             "Point": ["1", "2", "3", "4", "5"],
             "Phase": ["Superheated", "Superheated", "Saturated Vapor (x=1)", "Saturated Liquid (x=0)", "Saturated Liquid (x=0)"],
@@ -580,6 +606,6 @@ elif "Thermodynamic" in mode:
                 st.write("### Computed State Properties")
                 st.dataframe(st_df.style.format({"P_bar_a": "{:.2f}", "T_C": "{:.1f}", "h": "{:.1f}", "s": "{:.3f}", "v": "{:.4f}"}))
                 
-                fig, pdf_bytes = plot_thermo_diagrams(st_df)
+                fig, pdf_bytes = plot_thermo_diagrams(st_df, zoom=zoom_view)
                 st.pyplot(fig)
                 st.download_button("📥 Download Thermodynamic Report", data=pdf_bytes, file_name="Thermo_Cycle_Report.pdf", mime="application/pdf")
