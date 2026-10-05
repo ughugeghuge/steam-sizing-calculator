@@ -76,7 +76,7 @@ def solve_single_case(steam_type, T, P, F, V, d):
     steam_type = 'saturated' if steam_type.lower().startswith('sat') else 'superheated'
     rho, mu, vg = get_thermo_props(steam_type, P, T)
     
-    if steam_type == 'saturated' and P is not None and T is None:
+    if steam_type == 'saturated' and pd.notna(P) and pd.isna(T):
         T = IAPWS97(P=(P * 0.1) + 0.101325, x=1).T - 273.15
 
     if pd.isna(d) and pd.notna(F) and pd.notna(V) and vg is not None:
@@ -99,7 +99,8 @@ def add_watermark(fig):
     fig.text(0.98, 0.02, "prepared by- Umesh Ghuge", ha="right", va="bottom", fontsize=10, color="lightgray", style="italic")
 
 def generate_validation_pdf(df, title="STEAM LINE ADEQUACY REPORT"):
-    fig, ax = plt.subplots(figsize=(16, min(4 + len(df)*0.5, 12)))
+    # Expanded width to 22 to accommodate all 13 columns comfortably without squishing text
+    fig, ax = plt.subplots(figsize=(22, min(4 + len(df)*0.5, 12)))
     ax.axis('off')
     
     ax.text(0.5, 0.95, title, fontsize=20, weight='bold', ha='center', va='top', color='#1F4E79')
@@ -152,7 +153,6 @@ def solve_and_plot_steam_chart(types, Ts, Ps, Fs, Vs, ds):
         table_data.append([f"C{i+1}", st_type, f"{c['T']:.1f}" if pd.notna(c['T']) else "-", 
                            f"{c['P']:.2f}", f"{c['F']:.0f}", f"{c['V']:.1f}", f"{c['d']:.1f}"])
 
-    # Modernized Table
     table = tr.table(cellText=table_data, colLabels=table_cols, loc='center', cellLoc='center', bbox=[0.05, 0.4, 0.9, 0.4])
     table.auto_set_font_size(False)
     table.set_fontsize(10)
@@ -294,6 +294,9 @@ def plot_moody_chart(Re_op, f_op, ed_op, calc_data):
     ax.legend(loc='upper right')
 
     add_watermark(fig)
+    ist_tz = pytz.timezone('Asia/Kolkata')
+    fig.text(0.02, 0.02, f"Date: {datetime.now(ist_tz).strftime('%Y-%m-%d %H:%M:%S IST')}", ha="left", va="bottom", fontsize=9, color="gray")
+    
     pdf_buffer = io.BytesIO()
     fig.savefig(pdf_buffer, format="pdf", bbox_inches="tight")
     pdf_buffer.seek(0)
@@ -414,7 +417,7 @@ elif "Adequacy" in mode:
             
             rho, mu, vg = get_thermo_props(stype, P_bar, T_c)
             if rho is None:
-                results.append({"Case": cid, "Remark": "Error: Missing Thermo Data"})
+                results.append({"Case ID": cid, "Remark": "Error: Missing Thermo Data"})
                 continue
                 
             mass_flow_kg_s = flow / 3600
@@ -438,25 +441,33 @@ elif "Adequacy" in mode:
             # 3. Actual Line Checks
             act_dp, act_vel, _, _, _ = calc_dp(act_d, mass_flow_kg_s, rho, mu, L_m, roughness)
             
-            # Remark Logic based on DP standard
             idx_act = get_pipe_index(act_d)
             idx_req = get_pipe_index(std_d_dp)
             
             if act_d < std_d_dp:
                 status = "🔴 Undersized"
+                sug_d = f"{std_d_dp:.1f}"
             elif idx_act > idx_req + 1:
                 status = "🟡 Oversized"
+                sug_d = f"{std_d_dp:.1f}"
             else:
                 status = "🟢 Optimal"
+                sug_d = "Keep Current"
                 
             results.append({
-                "Case ID": cid,
-                "Calc Dia (Vel) mm": f"{std_d_vel:.1f}",
-                "Calc Dia (DP) mm": f"{std_d_dp:.1f}",
-                "Actual Dia mm": f"{act_d:.1f}",
-                "Actual Vel (m/s)": f"{act_vel:.1f}",
-                "Actual DP (bar)": f"{act_dp:.3f}",
-                "Remark": status
+                "Case": cid,
+                "Type": "Sat" if stype.lower().startswith('sat') else "Sup",
+                "P (bar)": f"{P_bar:.1f}",
+                "T (°C)": f"{T_c:.1f}" if pd.notna(T_c) else "-",
+                "Flow(kg/h)": f"{flow:.0f}",
+                "L (m)": f"{L_m:.0f}",
+                "Act D(mm)": f"{act_d:.1f}",
+                "Act V(m/s)": f"{act_vel:.1f}",
+                "Act DP(bar)": f"{act_dp:.3f}",
+                "Req D(Vel)": f"{std_d_vel:.1f}",
+                "Req D(DP)": f"{std_d_dp:.1f}",
+                "Remark": status,
+                "Suggested D": sug_d
             })
             
         res_df = pd.DataFrame(results)
@@ -472,7 +483,7 @@ elif "Adequacy" in mode:
         st.dataframe(res_df.style.map(color_rules, subset=["Remark"]), use_container_width=True)
         
         pdf_report = generate_validation_pdf(res_df)
-        st.download_button("📥 Download PDF Report", data=pdf_report, file_name="Line_Adequacy_Report.pdf", mime="application/pdf")
+        st.download_button("📥 Download Full Validation PDF", data=pdf_report, file_name="Line_Adequacy_Report.pdf", mime="application/pdf")
 
 # ---------------------------------------------------------
 # MODE 3: DARCY-WEISBACH & MOODY CHART
